@@ -1,10 +1,10 @@
     .text
-    .global __co_yield_to
-    .type __co_yield_to, @function
+    .global __co_yield_to_asm
+    .type __co_yield_to_asm, @function
     // __yield_to(prev, next
     // eax edx ecx
     // ebx edi esi ebp
-__co_yield_to:
+__co_yield_to_asm:
     pushl %ebp
     movl %esp, %ebp
 
@@ -30,12 +30,11 @@ __co_yield_to:
     popl %ebx
     popl %ebp
     ret
-    .size __co_yield_to, .-__co_yield_to
+    .size __co_yield_to_asm, .-__co_yield_to_asm
 
-    .global __co_start
-    .type __co_start, @function
-__co_start:
+    .global __co_start_asm
+    .type __co_start_asm, @function
+__co_start_asm:
     pushl %eax
     call __co_main@PLT
-    .size __co_start, .-__co_start
-
+    .size __co_start_asm, .-__co_start_asm
