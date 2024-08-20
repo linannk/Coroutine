@@ -8,9 +8,9 @@
 #include "coroutine.h"
 
 struct CoroutineScheduler {
-  struct Coroutine *idle;
   struct Coroutine *current;
   std::queue<struct Coroutine *> q;
+  struct Coroutine idle;
 
   struct Coroutine *pick_next(void) {
     if (q.empty()) {
@@ -26,16 +26,22 @@ struct CoroutineScheduler {
   }
 };
 
-// struct CoroutineScheduler gCoroutineScheduler;
+// thread_local
+struct CoroutineScheduler gCoroutineScheduler;
 
-thread_local struct CoroutineScheduler gCoroutineScheduler;
+static struct Coroutine *get_current_coroutine(void) {
+  return gCoroutineScheduler.current;
+}
+
+static void set_current_coroutine(struct Coroutine *routine) {
+  gCoroutineScheduler.current = routine;
+}
 
 static struct Coroutine *co_pick_next(void) {
   return gCoroutineScheduler.pick_next();
 }
 
-void __CoroutineDestroy(struct Coroutine *coroutine) {
-  std::cout << "Free: " << coroutine << std::endl;
+static void __CoroutineDestroy(struct Coroutine *coroutine) {
   free(coroutine->stack);
   free(coroutine);
 }
@@ -45,8 +51,8 @@ static void co_finish_yield(struct Coroutine* prev) {
     if (0 == __atomic_sub_fetch(&prev->refcount, 1, __ATOMIC_ACQ_REL)) {
       __CoroutineDestroy(prev);
     }
-  } else if (prev->state & COROUTINE_STATE_INTERRUPTIBLE) {
-    std::cout << "Interruptible: " << prev << std::endl;
+  } else if (prev->state & COROUTINE_STATE_SUSPENDED) {
+    // std::cout << "Interruptible: " << prev << std::endl;
   } else {
     gCoroutineScheduler.activate(prev);
   }
@@ -61,8 +67,8 @@ void CoroutineYield(void) {
     return;
   }
 
-  prev = gCoroutineScheduler.current;
-  gCoroutineScheduler.current = next;
+  prev = get_current_coroutine();
+  set_current_coroutine(next);
 
   prev = __co_yield_to_asm(prev, next);
   co_finish_yield(prev);
@@ -70,8 +76,8 @@ void CoroutineYield(void) {
 }
 
 void CoroutineExit(void *status) {
-  struct Coroutine *co = gCoroutineScheduler.current;
-  co->state |= COROUTINE_STATE_DEAD;
+  struct Coroutine *co = get_current_coroutine();
+  __atomic_or_fetch(&co->state, COROUTINE_STATE_DEAD, __ATOMIC_RELEASE);
   CoroutineYield();
 }
 
@@ -82,17 +88,18 @@ extern "C" void __co_main(struct Coroutine *prev, struct Coroutine *self) {
   CoroutineExit(nullptr);
 }
 
-struct Coroutine *CoroutineCreate(void (*func)(void *), void *data) {
+struct Coroutine *CoroutineCreate(void (*func)(void *), void *data,
+                                  size_t stackSize) {
   struct Coroutine *co = (struct Coroutine *)malloc(sizeof(*co));
   if (!co) {
     return nullptr;
   }
-  void *stack = malloc(1 << 20);
+  void *stack = malloc(stackSize);
   if (!stack) {
     free(co);
     return nullptr;
   }
-  co->sp = (unsigned long)stack + (1 << 20);
+  co->sp = (unsigned long)stack + stackSize;
   co->state = 0;
 
   // one for caller
@@ -103,14 +110,27 @@ struct Coroutine *CoroutineCreate(void (*func)(void *), void *data) {
   co->func = func;
   co->data = data;
 
+#if defined(__i386__)
   *((void **)(co->sp - 4)) = co;
   *((void **)(co->sp - 8)) = (void *)__co_start_asm;
-  *((void **)(co->sp - 12)) = 0; // esi
-  *((void **)(co->sp - 16)) = 0; // edi
-  *((void **)(co->sp - 20)) = 0; // ebx
-  *((void **)(co->sp - 24)) = 0; // ebp
-
-  co->sp -= 24;
+  *((void **)(co->sp - 12)) = 0; // ebp
+  *((void **)(co->sp - 16)) = 0; // ebx
+  *((void **)(co->sp - 20)) = 0; // edi
+  *((void **)(co->sp - 24)) = 0; // esi
+  co->sp -= 6 * 4;
+#elif defined(__x86_64__)
+  *((void **)(co->sp - 1 * 8)) = co;
+  *((void **)(co->sp - 2 * 8)) = (void *)__co_start_asm;
+  *((void **)(co->sp - 3 * 8)) = 0; // %rbp
+  *((void **)(co->sp - 4 * 8)) = 0; // %rbx
+  *((void **)(co->sp - 5 * 8)) = 0; // %r12
+  *((void **)(co->sp - 6 * 8)) = 0; // %r13
+  *((void **)(co->sp - 7 * 8)) = 0; // %r14
+  *((void **)(co->sp - 8 * 8)) = 0; // %r15
+  co->sp -= 8 * 8;
+#else
+#error "Unsupported architecture"
+#endif
 
   return co;
 }
@@ -127,10 +147,9 @@ static struct Coroutine initCoroutine = {
 
 void my_co1(void *data) {
   for (int i = 0; i < 10; ++i) {
-    std::cout << "= my_co1: " << data << std::endl;
     CoroutineYield();
 
-    std::cout << "== my_co1: " << data << std::endl;
+    std::cerr << "== my_co1: " << data << std::endl;
     CoroutineYield();
   }
 
@@ -143,7 +162,7 @@ void my_co1(void *data) {
 }
 
 void my_cox(void *data) {
-  std::cout << "my_cox ===>>>>>" << std::endl;
+  //std::cout << "my_cox ===>>>>>" << std::endl;
   std::cout << "===============" << std::endl;
 
   auto cox = CoroutineCreate(my_cox, (char *)data + 1);

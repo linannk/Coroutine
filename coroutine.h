@@ -1,16 +1,22 @@
 #ifndef _COROUTINE_H_
 #define _COROUTINE_H_
+#include <stddef.h>
+#include <stdint.h>
 
 enum CoroutineState {
   COROUTINE_STATE_DEAD = 0x01,
-  COROUTINE_STATE_INTERRUPTIBLE = 0x02,
+  COROUTINE_STATE_SUSPENDED = 0x02,
 };
 
-struct Coroutine {
-  unsigned long sp;
-  unsigned long state;
+struct CoroutineScheduler;
 
+struct Coroutine {
+  uintptr_t sp;
+
+  int state;
   int refcount;
+
+  struct CoroutineScheduler *scheduler;
 
   void *stack;
   void (*func)(void *);
@@ -34,7 +40,8 @@ extern "C" struct Coroutine *__co_yield_to_asm(struct Coroutine *prev,
  ****************************************************/
 extern "C" void __co_start_asm(void);
 
-struct Coroutine *CoroutineCreate(void (*func)(void *), void *data);
+struct Coroutine *CoroutineCreate(void (*func)(void *), void *data,
+                                  size_t stackSize = 4096);
 
 void CoroutineDestroy(struct Coroutine *coroutine);
 

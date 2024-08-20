@@ -1,4 +1,5 @@
     .text
+    .p2align 2
     .global __co_yield_to_asm
     .type __co_yield_to_asm, @function
     // __yield_to(prev, next
@@ -32,6 +33,7 @@ __co_yield_to_asm:
     ret
     .size __co_yield_to_asm, .-__co_yield_to_asm
 
+    .p2align 2
     .global __co_start_asm
     .type __co_start_asm, @function
 __co_start_asm:
